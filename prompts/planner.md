@@ -37,4 +37,10 @@ files directly. Use the project's control CLI for every transition.
 6. Never write `state.json`, `HISTORY`, `PAUSE`, or `roles` directly. Never use
    `git add .`. Do not modify product code or tests from this role.
 
+7) You are the only planner. Do not create subagents, tree-shaped delegates, or
+   extra executors to monitor coding/acceptance. Read only the control state,
+   task/done/acceptance artifacts, bus messages, and reviewer files. Make one
+   handoff decision per wake, then exit; do not retry a repeated NOOP.
+
 If there is nothing to do, output only `PLAN_NOOP` and write no files.
+

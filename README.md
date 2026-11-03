@@ -108,6 +108,7 @@ dsh plugin --profile web add /absolute/path/to/dsh-dispatch-gate
 | `skipIfInboxPending` | `true` | 收件箱有消息时跳过 |
 | `maxConcurrentAgents` | `1` | 同时允许运行的 gate 管理窗口数 |
 | `syncWakeCooldownMs` | `30000` | SYNC 触发 planner 唤醒的冷却时间 |
+| `dispatchCooldownMs` | `10000` | 任意派发后的全局冷却时间 |
 | `peakScheduleEnabled` | `false` | 是否启用峰谷定时 |
 
 任务配置支持：
@@ -210,9 +211,12 @@ gate 默认只允许一个由它管理的窗口运行：
 maxConcurrentAgents: 1
 ```
 
-当 coding 正在运行时，即使 planner 收到了新的同步事件，planner 也会进入
-`peer_busy` 状态等待，直到 coding 结束。这样可以让本地角色串行执行，避免多个
-session 同时向上游发起模型请求。
+当 coding 正在运行、等待，或收件箱里还有待处理消息时，即使 planner 收到了新的
+同步事件，planner 也会进入 `peer_busy` 状态等待，直到 coding 完全空闲。这样可以
+让本地角色串行执行，避免多个 session 同时向上游发起模型请求。
+
+每次派发后还有 `dispatchCooldownMs` 全局冷却，防止 DSH 状态尚未更新时连续派发
+下一个角色。
 
 如果需要并行执行，可以调大该值，但不建议与同一个 provider 的高并发请求一起使用。
 

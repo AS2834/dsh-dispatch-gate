@@ -112,6 +112,7 @@ Main configuration fields:
 | `skipIfInboxPending` | `true` | Skip targets with pending inbox work |
 | `maxConcurrentAgents` | `1` | Concurrent gate-managed windows allowed to run |
 | `syncWakeCooldownMs` | `30000` | Cooldown for SYNC-triggered planner wakes |
+| `dispatchCooldownMs` | `10000` | Global cooldown after any dispatch |
 | `peakScheduleEnabled` | `false` | Enable peak/off-peak scheduling |
 
 Job fields:
@@ -216,9 +217,13 @@ By default, the gate allows only one gate-managed window to run at a time:
 maxConcurrentAgents: 1
 ```
 
-If coding is running, a planner sync event is deferred as `peer_busy` until coding
-finishes. This keeps local roles serialized and prevents multiple sessions from
-issuing model requests to the upstream provider at the same time.
+If coding is running, waiting, or still has pending inbox work, a planner sync
+event is deferred as `peer_busy` until coding is fully idle. This keeps local
+roles serialized and prevents multiple sessions from issuing model requests to
+the upstream provider at the same time.
+
+`dispatchCooldownMs` adds a global cooldown after every dispatch, so the gate
+does not start the next role while DSH status is still catching up.
 
 Increase the value only if your provider and workflow can tolerate parallel
 requests.
