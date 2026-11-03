@@ -323,6 +323,22 @@ has its own context, tools, and permissions, and an external control plane
 decides when roles switch. The plugin does not create subagents or aggregate
 their results.
 
+## Subagent restriction
+
+Sessions managed by the gate are hard-blocked from calling:
+
+```text
+subagent
+subagent_fork
+workflow
+```
+
+The block is enforced by `ctx.tools.guard()`, not by prompt text. A denied call
+returns an error and does not create a child agent.
+
+Existing subagents are not killed; the restriction applies to future calls.
+Manually created sessions that are not mapped to a gate job are not restricted.
+
 ## Limitations
 
 - Target windows must stay live; the plugin does not resume closed sessions

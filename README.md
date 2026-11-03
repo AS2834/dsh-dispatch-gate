@@ -305,6 +305,22 @@ subagent 是父 Agent 创建的子执行，适合范围明确的一次性任务�
 Dispatch Gate 管理多个独立的长期窗口。每个窗口有自己的上下文、工具和权限，
 外部控制面决定何时切换角色。插件不创建子 Agent，也不汇总执行结果。
 
+## Subagent 限制
+
+由 gate 管理的角色 session 会被硬性禁止调用：
+
+```text
+subagent
+subagent_fork
+workflow
+```
+
+这是 `ctx.tools.guard()` 级别的拦截，不依赖 prompt。被拦截的调用会直接返回错误，
+不会创建子 Agent。
+
+已有 subagent 不会被杀掉，会继续运行到结束；限制只对之后的调用生效。手动创建、
+且不在 gate 任务映射中的 session 不受此限制。
+
 ## 限制
 
 - 目标窗口必须保持 live；插件不会自动恢复关闭的窗口
