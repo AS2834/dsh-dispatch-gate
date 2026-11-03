@@ -1,0 +1,51 @@
+# dsh-dispatch-gate bundle layer.
+#
+# This row is DISABLED in the public template because every path below is
+# project-specific. Edit the paths/jobs, then remove `disabled: true` (or enable
+# the row from the plugin manager) and restart the Web profile.
+#
+# The gate reads a control-plane command, never edits that state itself.
+- insert:
+    - id: dispatch-gate
+      name: dsh-dispatch-gate
+      disabled: true
+      config:
+        pollMs: 10000
+        initialDelayMs: 5000
+        # Optional bus alias file: role name -> session id.
+        aliasStatePath: /absolute/path/to/agent-bus/state.json
+        # Relative paths below are resolved against check.cwd.
+        statusPath: logs/dispatch-gate/status.json
+        project: example-project
+        uiShowIn: []
+        requireIdle: true
+        skipIfInboxPending: true
+        # Peak/valley scheduling is optional. It is off in this template.
+        peakScheduleEnabled: false
+        timeZone: Asia/Shanghai
+        peakWindows: [09:00-12:00, 14:00-18:00]
+        check:
+          cwd: /absolute/path/to/project
+          command:
+            - python3
+            - tools/control.py
+            - status
+            - --json
+          timeoutMs: 15000
+        jobs:
+          - id: coding-dispatch
+            agent: coding
+            states: [assigned_coding]
+            promptFile: ./prompts/coding.md
+            retrySeconds: 300
+          - id: acceptance-dispatch
+            agent: acceptance
+            states: [awaiting_verification]
+            promptFile: ./prompts/acceptance.md
+            retrySeconds: 300
+          - id: planner-dispatch
+            agent: planner
+            states: [idle, assigned_coding, awaiting_verification, verified, submitted]
+            controlOnlyStates: [assigned_coding, awaiting_verification]
+            promptFile: ./prompts/planner.md
+            retrySeconds: 600

@@ -1,0 +1,10 @@
+node_modules/
+.DS_Store
+*.log
+*.zstd
+.env
+.env.*
+logs/
+status.json
+state.json
+run.lock

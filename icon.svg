@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Dispatch Gate">
+  <rect width="64" height="64" rx="14" fill="#0b1220"/>
+  <path d="M10 20h10v24H10zM44 20h10v24H44z" fill="#1d4ed8"/>
+  <path d="M20 32h24" stroke="#38bdf8" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="20" cy="32" r="6" fill="#22c55e"/>
+  <circle cx="44" cy="32" r="6" fill="#f97316"/>
+  <path d="M28 26l8 6-8 6" fill="none" stroke="#e2e8f0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M20 14v6M44 14v6M20 44v6M44 44v6" stroke="#e2e8f0" stroke-width="2" stroke-linecap="round" opacity=".45"/>
+</svg>

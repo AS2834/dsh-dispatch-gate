@@ -1,0 +1,66 @@
+{
+  "name": "dsh-dispatch-gate",
+  "version": "0.2.0",
+  "description": "Idle-gated, event-driven dispatch for independent DSH root sessions, with a composer status/pause bar.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "lib",
+    "prompts",
+    "client.js",
+    "locale/*.json",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "install.sh",
+    "uninstall.sh"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "engines": {
+    "dsh": "^0.2.1-rc.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "^0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.5"
+  },
+  "license": "MIT",
+  "author": "dsh-dispatch-gate contributors",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dispatch",
+    "multi-agent",
+    "scheduler",
+    "idle"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AS2834/dsh-dispatch-gate.git"
+  },
+  "homepage": "https://github.com/AS2834/dsh-dispatch-gate#readme",
+  "bugs": {
+    "url": "https://github.com/AS2834/dsh-dispatch-gate/issues"
+  }
+}
