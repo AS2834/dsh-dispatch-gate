@@ -110,6 +110,8 @@ Main configuration fields:
 | `aliasStatePath` | unset | Optional bus alias file |
 | `requireIdle` | `true` | Dispatch only to idle windows |
 | `skipIfInboxPending` | `true` | Skip targets with pending inbox work |
+| `maxConcurrentAgents` | `1` | Concurrent gate-managed windows allowed to run |
+| `syncWakeCooldownMs` | `30000` | Cooldown for SYNC-triggered planner wakes |
 | `peakScheduleEnabled` | `false` | Enable peak/off-peak scheduling |
 
 Job fields:
@@ -204,6 +206,26 @@ uiShowIn: [planner, coding]
 ```
 
 An empty list (`[]`) shows the status bar in every gate-managed role window.
+
+
+## Concurrency control
+
+By default, the gate allows only one gate-managed window to run at a time:
+
+```yaml
+maxConcurrentAgents: 1
+```
+
+If coding is running, a planner sync event is deferred as `peer_busy` until coding
+finishes. This keeps local roles serialized and prevents multiple sessions from
+issuing model requests to the upstream provider at the same time.
+
+Increase the value only if your provider and workflow can tolerate parallel
+requests.
+
+`syncWakeCooldownMs` controls the cooldown for planner wakes triggered by
+`SYNC.md`, defaulting to 30 seconds. It prevents the planner from waking itself
+after writing its own sync file.
 
 ## Control interface
 
