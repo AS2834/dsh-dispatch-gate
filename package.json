@@ -1,6 +1,6 @@
 {
   "name": "dsh-dispatch-gate",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Idle-gated control-plane dispatch for DSH root sessions, with a composer status/pause bar.",
   "type": "module",

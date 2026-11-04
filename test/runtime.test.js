@@ -129,7 +129,7 @@ test("automatically resumes an offline persisted session without replaying an un
       assert.equal(id, SESSION);
       resumeCalls += 1;
       live = recovered;
-      return recovered;
+      return { agent: recovered };
     },
   };
   runtime.jobs[0].lastState = "assigned_coding";
@@ -215,6 +215,20 @@ test("does not race another project that reserved the same session", async () =>
   const result = await runtime.tickOnce();
   assert.equal(result.results[0].reason, "session_reserved");
   assert.equal(target.followups.length, 0);
+});
+
+test("treats a sessionController error result as a failed offline recovery", async () => {
+  const { runtime } = makeRuntime();
+  runtime.ctx.agents.get = () => undefined;
+  runtime.ctx.sessionController = {
+    async resolveAgent() {
+      return { error: new Error("session/not-found") };
+    },
+  };
+
+  const result = await runtime.tickOnce();
+  assert.equal(result.results[0].reason, "agent_recovery_backoff");
+  assert.match(runtime.offlineRecovery.get(SESSION).lastError, /not-found/);
 });
 
 test("backs off failed offline recovery and persists the next attempt across restart", async () => {

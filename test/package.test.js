@@ -37,6 +37,15 @@ test("declares a web client half for the composer", () => {
   assert.match(client, /selectedProject/);
 });
 
+test("uses schemastery APIs available in this DSH runtime", () => {
+  const index = readFileSync(join(root, "lib/index.js"), "utf8");
+  // Schemastery 3.18.5 object fields are optional by default and expose no
+  // `.optional()` method. A schema using it fails before the plugin mounts.
+  assert.equal(index.includes(".optional("), false);
+  assert.match(index, /check: Check\.required\(\)/);
+  assert.match(index, /check: z\.any\(\)/);
+});
+
 test("bundle patch inserts the gate row with three jobs", () => {
   const patch = readFileSync(join(root, "cordis.patch.yml"), "utf8");
   assert.match(patch, /id: dispatch-gate/);
