@@ -17,12 +17,90 @@ The plugin does not create agents or modify control-plane state. It handles
 window scheduling and prompt delivery; task state, rounds, and handoffs remain
 owned by the project's control plane.
 
+It is designed to pair with
+**[dsh-agent-bus](https://github.com/AS2834/dsh-agent-bus)**: Bus provides stable
+roles, durable messages, blockers, and offline redelivery, while Gate provides
+state-driven dispatch, idle gating, pause/recovery, and strict handoff checks.
+Together they form a communication-and-scheduling foundation; the project
+still owns its control/state/claims workflow.
+
+## Architecture and prerequisites
+
+Dispatch Gate is not a complete workflow system by itself:
+
+```text
+project control/state/claims  decides what is next and whether work completed
+             ↓
+Dispatch Gate                 decides when it is safe to wake a role window
+             ↓
+coordinator/worker windows    perform work and update project records
+             ↕
+Agent Bus (optional)          role aliases, advisory messages, and blockers
+```
+
+Agent Bus remains a separate plugin; it has not been merged into Gate. Gate can
+dispatch without it when every role has an explicit `agentIds` mapping, but
+role messaging and blocker delivery still require Agent Bus. Gate replaces
+fixed Schedule dispatch ticks, not the project's task state machine.
+
+For basic state-based dispatch, the configured read-only command must exit
+successfully and print at least:
+
+```json
+{"state":"assigned_coding"}
+```
+
+For safe completed-worker handoff and restart recovery, it must also expose the
+current `task_id`, `round`, `sequence`, `handoff_sha256`, and claims. A completed
+claim must match the current task/round/handoff and contain a non-empty token,
+completion time, and exact configured `role_session`. Role prompts and the
+project's control tool—not Gate—must create claims and advance state. The
+control tool should use locking, atomic writes, and sequence/CAS checks.
+
+The lifecycle is: the coordinator creates a task/handoff and changes state;
+the worker claims through the project control tool; the worker finishes the
+same claim; Gate validates task/round/handoff/session and wakes the
+coordinator. Agent Bus carries aliases and messages but does not create these
+records.
+
+This public package does not ship a generic control-plane starter. A new
+project needs an existing compatible control plane or an adapter before Gate
+can provide a complete automated workflow.
+
+## Quick start for an already integrated project
+
+1. Ask an ordinary DSH window to install/update Gate and verify the project's
+   state command, persistent role sessions, and optional Agent Bus aliases.
+2. Restart DSH and refresh the page.
+3. In the coordinator or target window, enter `/gate`.
+
+A response beginning with `gate: running · connected` means Gate is active.
+It starts with the DSH Host; `/gate` displays status rather than starting it.
+
+| Goal | Command |
+|---|---|
+| Show status | `/gate` |
+| Pause new work | `/gate pause` |
+| Resume automatic scheduling | `/gate resume` |
+| Run through a peak window | `/gate force` |
+| Return to automatic scheduling | `/gate auto` |
+| Check for work immediately | `/gate tick` |
+
+`/gate tick` can dispatch real work and is normally unnecessary. Use
+`/gate <project> ...` only for shared sessions or project control from an
+unmanaged window.
+
 ## Features
 
 - Dispatch prompts by control state, role, and retry interval
 - Check that the target window is live and idle, and that its inbox is empty
+- Configure arbitrary coordinator, worker, and UI roles
+- Run multiple isolated projects from one plugin instance
 - Watch the control directory, `SYNC.md`, and reviewer mailbox for changes
 - Retry briefly while a target is busy without queueing duplicate prompts
+- Recover ordinary persistent sessions with durable exponential backoff
+- Validate completed handoffs against task, round, handoff, and exact
+  `role_session`
 - Persist runtime state, lock data, and status snapshots
 - Provide a composer status bar with pause, resume, and force controls
 - Optional peak/off-peak scheduling
@@ -83,37 +161,49 @@ command with your project's configuration:
       # Remove this line after configuration
       disabled: true
       config:
-        project: my-project
-        check:
-          cwd: /absolute/path/to/project
-          command: [python3, tools/control.py, status, --json]
-        jobs:
-          - id: coding-dispatch
-            agent: coding
-            states: [assigned_coding]
-            promptFile: ./prompts/coding.md
+        projects:
+          - project: my-project
+            coordinatorAgent: lead
+            workerStateRoles: {building: builder}
+            agentIds:
+              lead: session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+              builder: session-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+            check:
+              cwd: /absolute/path/to/project
+              command: [python3, tools/control.py, status, --json]
+            jobs:
+              - id: builder-dispatch
+                agent: builder
+                states: [building]
+                promptFile: /absolute/path/to/builder.md
 ```
 
 Main configuration fields:
 
 | Field | Default | Description |
 |---|---|---|
+| `projects` | `[]` | Isolated project runtimes; the legacy single-project form remains supported |
 | `pollMs` | `10000` | Fallback poll interval |
 | `initialDelayMs` | `5000` | Delay before the first check |
 | `watchDir` | `plans/control` | Control-plane event directory |
-| `mailboxDirs` | `["plans/mailbox/codex"]` | Reviewer reply directories |
+| `mailboxDirs` | `["plans/mailbox/astra"]` | Reviewer reply directories |
 | `syncFiles` | `["plans/control/SYNC.md"]` | Sync files that trigger a check |
-| `statusPath` | `logs/dispatch-gate/status.json` | Status file read by the composer |
-| `project` | `default` | Project label in dispatch headers |
-| `uiShowIn` | `[]` | Roles that render the status bar; empty means all managed roles |
+| `statusPath` | project-scoped | Read-only diagnostic status snapshot |
+| `project` | required in `projects[]` | Project label and `/gate` route key |
+| `uiShowIn` | coordinator role | Roles that render the status bar |
 | `agentIds` | `{}` | Role-to-session-id mapping |
-| `aliasStatePath` | unset | Optional bus alias file |
+| `aliasStatePath` | DSH agent-bus state | Optional bus alias file |
 | `requireIdle` | `true` | Dispatch only to idle windows |
 | `skipIfInboxPending` | `true` | Skip targets with pending inbox work |
+| `coordinatorAgent` | `planner` | Role that receives completed worker handoffs |
+| `workerStateRoles` | coding/acceptance defaults | Control state to worker-role mapping |
+| `offlineRecoveryEnabled` | `true` | Resume ordinary persistent sessions when offline |
+| `offlineRetryInitialDelayMs` | `5000` | Initial recovery backoff |
+| `offlineRetryMaxDelayMs` | `300000` | Maximum recovery backoff |
 | `maxConcurrentAgents` | `1` | Concurrent gate-managed windows allowed to run |
 | `syncWakeCooldownMs` | `30000` | Cooldown for SYNC-triggered planner wakes |
 | `dispatchCooldownMs` | `10000` | Global cooldown after any dispatch |
-| `peakScheduleEnabled` | `false` | Enable peak/off-peak scheduling |
+| `peakScheduleEnabled` | `true` | Enable peak/off-peak scheduling; the public template overrides it to `false` |
 
 Job fields:
 
@@ -195,8 +285,10 @@ Job fields:
 - `retrySeconds`: fallback retry interval when the state is unchanged
 - `enabled`: set to `false` to disable the job
 
-The role's session must be live. If a window is closed or the session is
-offline, the gate skips that role and does not resume the window.
+The role must resolve to a normal persistent root session. If it is offline,
+the gate asks DSH Session Controller to resume it. Failed recovery attempts use
+durable exponential backoff; deleted, non-persistent, subagent-owned, or
+writer-held sessions cannot be forced back online.
 
 ### Status bar roles
 
@@ -206,7 +298,7 @@ offline, the gate skips that role and does not resume the window.
 uiShowIn: [planner, coding]
 ```
 
-An empty list (`[]`) shows the status bar in every gate-managed role window.
+When omitted or empty, `uiShowIn` falls back to `coordinatorAgent`.
 
 
 ## Concurrency control
@@ -306,8 +398,9 @@ notice is published. This feature is disabled in the public template.
 The gate writes:
 
 ```text
-<check.cwd>/logs/dispatch-gate/status.json
-~/.dsh/storages/dispatch-gate/state.json
+<check.cwd>/logs/dispatch-gate/<project>/status.json
+~/.dsh/storages/dispatch-gate/<project>/state.json
+~/.dsh/storages/dispatch-gate/<project>/run.lock
 ```
 
 These files are used for status display and restart recovery and should not be
@@ -331,19 +424,28 @@ Sessions managed by the gate are hard-blocked from calling:
 subagent
 subagent_fork
 workflow
+grep
+rg
 ```
 
 The block is enforced by `ctx.tools.guard()`, not by prompt text. A denied call
-returns an error and does not create a child agent.
+returns an error and does not create a child agent. Direct `grep`/`rg` calls
+through the bash tool, including absolute-path invocations, are also denied;
+use the read tool for source inspection.
 
 Existing subagents are not killed; the restriction applies to future calls.
 Manually created sessions that are not mapped to a gate job are not restricted.
+The guard is removed when the runtime is disposed. If the DSH environment does
+not provide `tools.guard`, the Host logs `subagent restriction is not installed`
+and this restriction is not active. This guard is not an operating-system
+sandbox.
 
 ## Limitations
 
-- Target windows must stay live; the plugin does not resume closed sessions
-- One gate instance manages one project; parallel projects need separate
-  instances
+- Offline recovery requires a resumable persistent DSH root session
+- Multiple projects are isolated in one Host process, but the shared-session
+  lease is not a cross-process or distributed lock
+- A shared session still processes only one turn at a time
 - The plugin does not make architecture, security, or commit decisions
 - Files under `prompts/` are examples and must be adapted
 - The plugin does not read or modify a `PAUSE` file directly; pause behavior

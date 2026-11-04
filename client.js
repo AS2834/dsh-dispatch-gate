@@ -30,6 +30,8 @@ window.__ModuleLoader__.load({
       "disconnected": "未连接",
       "retry": "重试",
       "peakPaused": "峰段暂停",
+      "manualPaused": "手动暂停",
+      "uncleanPaused": "异常恢复暂停",
       "forced": "峰段强制运行",
       "peak": "峰段",
       "offPeak": "谷段",
@@ -57,6 +59,8 @@ window.__ModuleLoader__.load({
       "disconnected": "disconnected",
       "retry": "Retry",
       "peakPaused": "peak hours paused",
+      "manualPaused": "manually paused",
+      "uncleanPaused": "unclean-start paused",
       "forced": "peak-hours override",
       "peak": "peak",
       "offPeak": "off-peak",
@@ -114,10 +118,11 @@ window.__ModuleLoader__.load({
     let ctx;
 
     function GateDock({ sessionId, t }) {
-      const [status, setStatus] = React.useState(null);
+      const [statusPayload, setStatusPayload] = React.useState(null);
       const [error, setError] = React.useState(null);
       const [busy, setBusy] = React.useState(null);
       const [collapsed, setCollapsed] = React.useState(readCollapsed);
+      const [selectedProject, setSelectedProject] = React.useState(null);
 
       const refresh = React.useCallback(async () => {
         if (!sessionId) {
@@ -134,7 +139,7 @@ window.__ModuleLoader__.load({
           if (!execution || execution.result?.kind === "error" || typeof text !== "string") {
             throw new Error(t("commandFailed"));
           }
-          setStatus(JSON.parse(text));
+          setStatusPayload(JSON.parse(text));
           setError(null);
         } catch (cause) {
           setError(cause instanceof Error ? cause.message : String(cause));
@@ -154,17 +159,16 @@ window.__ModuleLoader__.load({
         setBusy(line);
         setError(null);
         try {
-          const response = await ctx.remote.commands.execute(sessionId, line, []);
+          const routedLine = status?.commandProject
+            ? line.replace(/^\/gate\b/u, `/gate ${status.commandProject}`)
+            : line;
+          const response = await ctx.remote.commands.execute(sessionId, routedLine, []);
           if (!response || response.ok !== true) {
             throw new Error(response?.error?.message ?? t("commandFailed"));
           }
           const execution = response.value;
           if (!execution) throw new Error(t("commandFailed"));
           if (execution.result?.kind === "error") throw new Error(execution.result.text || t("commandFailed"));
-          const paused = line.endsWith("pause");
-          setStatus((previous) => previous
-            ? { ...previous, paused }
-            : { running: true, paused, jobs: [], project: null, ui: { showIn: ["planner"] }, lastError: null });
           await new Promise((resolve) => setTimeout(resolve, 300));
           await refresh();
         } catch (cause) {
@@ -180,61 +184,12 @@ window.__ModuleLoader__.load({
         writeCollapsed(next);
       }
 
-      // Render only in a session managed by this gate. `uiShowIn` can restrict
-      // the bar to selected roles; an empty list means every managed role.
-      if (!sessionId || !status) return null;
-      const currentJob = Array.isArray(status.jobs)
-        ? status.jobs.find((job) => job.agentId === sessionId)
-        : undefined;
-      const showIn = Array.isArray(status.ui?.showIn) ? status.ui.showIn : [];
-      if (!currentJob) return null;
-      if (showIn.length > 0 && !showIn.includes(currentJob.agent)) return null;
-      if (!status) {
-        return h("div", {
-          style: {
-            boxSizing: "border-box",
-            width: "100%",
-            maxWidth: "var(--dsh-composer-card-max-width)",
-            margin: "0 auto 6px",
-            padding: "6px 10px",
-            border: "1px solid var(--dsw-alias-border-l1)",
-            borderRadius: "var(--dsw-radius-md)",
-            background: "var(--dsw-specific-menu)",
-            color: error ? "var(--dsw-alias-state-error-primary)" : "var(--dsw-alias-label-tertiary)",
-            fontSize: 12,
-            lineHeight: "18px",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          },
-        }, [
-          h("span", { key: "title", style: { color: "var(--dsw-alias-label-primary)", fontWeight: 600 } }, t("title")),
-          h("span", { key: "state" }, error ? `${t("disconnected")} · ${t("unavailable")}` : t("waiting")),
-          error ? h("span", { key: "why", style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 } }, error) : null,
-          h("button", {
-            key: "retry",
-            type: "button",
-            onClick: () => void refresh(),
-            style: {
-              flex: "none", cursor: "pointer", border: "1px solid var(--dsw-alias-border-l1)",
-              borderRadius: "var(--dsw-radius-sm)", background: "transparent",
-              color: "var(--dsw-alias-label-primary)", fontSize: 12, lineHeight: "18px", padding: "1px 8px",
-            },
-          }, t("retry")),
-          h("button", {
-            key: "pause",
-            type: "button",
-            disabled: Boolean(busy),
-            onClick: () => void run("/gate pause"),
-            style: {
-              flex: "none", cursor: busy ? "default" : "pointer", border: "1px solid var(--dsw-alias-border-l1)",
-              borderRadius: "var(--dsw-radius-sm)", background: "transparent",
-              color: "var(--dsw-alias-label-primary)", fontSize: 12, lineHeight: "18px", padding: "1px 8px",
-              opacity: busy ? 0.5 : 1,
-            },
-          }, busy ? "…" : t("pause")),
-        ]);
-      }
+      if (!statusPayload) return null;
+      const visibleProjects = Array.isArray(statusPayload.projects)
+        ? statusPayload.projects.filter((project) => project.visible !== false)
+        : statusPayload.visible === false ? [] : [statusPayload];
+      const status = visibleProjects.find((project) => project.project === selectedProject) ?? visibleProjects[0];
+      if (!status || status.visible === false) return null;
       const jobs = Array.isArray(status.jobs) ? status.jobs : [];
 
       const now = Date.now();
@@ -242,7 +197,8 @@ window.__ModuleLoader__.load({
       // signal. Only an explicit running:false means the Host is gone.
       const stale = status.running === false;
       const paused = Boolean(status.paused);
-      const peakPaused = Boolean(status.peakPaused);
+      const pauseSource = status.pauseSource ?? (status.peakPaused ? "peak" : status.uncleanStart ? "unclean" : paused ? "manual" : null);
+      const peakPaused = pauseSource === "peak";
       const forced = Boolean(status.manualOverride) && Boolean(status.peakNow);
       const stateColor = paused || forced
         ? "var(--dsw-alias-state-warning-primary)"
@@ -250,7 +206,7 @@ window.__ModuleLoader__.load({
           ? "var(--dsw-alias-state-error-primary)"
           : "var(--dsw-alias-state-success-primary)";
       const label = paused
-        ? (peakPaused ? t("peakPaused") : t("paused"))
+        ? (pauseSource === "peak" ? t("peakPaused") : pauseSource === "unclean" ? t("uncleanPaused") : pauseSource === "manual" ? t("manualPaused") : t("paused"))
         : forced
           ? t("forced")
           : stale
@@ -312,6 +268,19 @@ window.__ModuleLoader__.load({
             style: { ...iconButtonStyle, border: "none", padding: "0 4px", color: "var(--dsw-alias-label-tertiary)" },
           }, collapsed ? "▸" : "▾"),
           h("span", { key: "title", style: { color: "var(--dsw-alias-label-primary)", fontWeight: 600, flex: "none" } }, t("title")),
+          visibleProjects.length > 1 ? h("select", {
+            key: "project",
+            value: status.project,
+            onChange: (event) => setSelectedProject(event.target.value),
+            style: {
+              maxWidth: 160,
+              border: "1px solid var(--dsw-alias-border-l1)",
+              borderRadius: "var(--dsw-radius-sm)",
+              background: "transparent",
+              color: "var(--dsw-alias-label-secondary)",
+              fontSize: 12,
+            },
+          }, visibleProjects.map((project) => h("option", { key: project.project, value: project.project }, project.project))) : null,
           h("span", { key: "label", style: { display: "inline-flex", alignItems: "center", minWidth: 0, color: stateColor } }, [dot(stateColor), label]),
           h("span", {
             key: "state",

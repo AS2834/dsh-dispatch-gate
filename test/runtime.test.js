@@ -33,10 +33,10 @@ function makeCtx(agent) {
 
 let runtimeSequence = 0;
 
-function makeRuntime({ state, agent, exec } = {}) {
+function makeRuntime({ state, agent, exec, dir: suppliedDir, config: configOverrides, random, acquireDispatch } = {}) {
   const current = state ?? { value: "assigned_coding" };
   const target = agent ?? makeAgent();
-  const dir = mkdtempSync(join(tmpdir(), `dispatch-gate-test-${++runtimeSequence}-`));
+  const dir = suppliedDir ?? mkdtempSync(join(tmpdir(), `dispatch-gate-test-${++runtimeSequence}-`));
   let next = 0;
   const createUserMessage = (input) => ({ id: `m-${++next}`, content: input.content, source: input.source });
   const execFileImpl = exec ?? ((file, args, options, callback) => {
@@ -62,9 +62,10 @@ function makeRuntime({ state, agent, exec } = {}) {
     peakScheduleEnabled: false,
     requireIdle: true,
     skipIfInboxPending: true,
+    ...configOverrides,
   };
   return {
-    runtime: new DispatchGateRuntime(makeCtx(target), config, { createUserMessage, execFileImpl }),
+    runtime: new DispatchGateRuntime(makeCtx(target), config, { createUserMessage, execFileImpl, random, acquireDispatch }),
     current,
     target,
     dir,
@@ -117,6 +118,160 @@ test("does not dispatch for a disallowed state and skips when the check fails", 
   assert.equal(failing.target.followups.length, 0);
 });
 
+test("automatically resumes an offline persisted session without replaying an unchanged round", async () => {
+  const { runtime, dir } = makeRuntime();
+  const recovered = makeAgent();
+  let live;
+  let resumeCalls = 0;
+  runtime.ctx.agents.get = (id) => (id === SESSION ? live : undefined);
+  runtime.ctx.sessionController = {
+    async resolveAgent(id) {
+      assert.equal(id, SESSION);
+      resumeCalls += 1;
+      live = recovered;
+      return recovered;
+    },
+  };
+  runtime.jobs[0].lastState = "assigned_coding";
+  runtime.jobs[0].lastDispatchAt = Date.now();
+
+  const result = await runtime.tickOnce();
+  assert.equal(resumeCalls, 1);
+  assert.equal(result.results[0].reason, "state_unchanged");
+  assert.equal(recovered.followups.length, 0, "session recovery must not replay an unchanged dispatch");
+
+  const status = JSON.parse(readFileSync(join(dir, "status.json"), "utf8"));
+  assert.equal(status.jobs[0].live, true);
+  assert.equal(status.jobs[0].recovery.status, "recovered");
+  assert.equal(status.jobs[0].recovery.attempts, 0);
+});
+
+test("derives arbitrary worker, coordinator, and UI roles from project config", async () => {
+  const { runtime, target } = makeRuntime({
+    state: { value: "review_ready" },
+    config: {
+      jobs: [{
+        id: "review-dispatch",
+        agent: "reviewer",
+        states: ["review_ready"],
+        prompt: "REVIEW",
+        retrySeconds: 300,
+        enabled: true,
+      }],
+      agentIds: { reviewer: SESSION },
+      coordinatorAgent: "lead",
+      controlChangeRoles: [],
+      workerStateRoles: { review_ready: "reviewer" },
+      workerRoles: [],
+      uiShowIn: [],
+    },
+  });
+
+  assert.deepEqual(runtime.workerRoles, ["reviewer"]);
+  assert.deepEqual(runtime.controlChangeRoles, ["lead"]);
+  assert.deepEqual(runtime.uiShowIn, ["lead"]);
+  assert.deepEqual(runtime.rolesForSession(SESSION), ["reviewer"]);
+  assert.equal(runtime.isVisibleToSession(SESSION), false);
+
+  const result = await runtime.tickOnce();
+  assert.equal(result.results[0].dispatch, true);
+  assert.equal(target.followups.length, 1);
+});
+
+test("tool guard blocks subagents and grep only in gate-managed sessions", async () => {
+  const { runtime } = makeRuntime();
+  let guard;
+  let disposed = false;
+  runtime.ctx.tools = {
+    guard(callback) {
+      guard = callback;
+      return () => {
+        disposed = true;
+      };
+    },
+  };
+
+  runtime.installToolGuard();
+  assert.equal(typeof guard, "function");
+  const managed = { id: SESSION };
+  const unmanaged = { id: "session-22222222-2222-4222-8222-222222222222" };
+
+  for (const name of ["subagent", "subagent_fork", "workflow", "grep", "rg"]) {
+    assert.match(guard({ agent: managed, name, arguments: {} }), /disabled in gate-managed sessions/u);
+    assert.equal(guard({ agent: unmanaged, name, arguments: {} }), undefined);
+  }
+  for (const command of ["grep needle file", "rg needle .", "/usr/bin/grep needle file", "command 'rg' needle ."]) {
+    assert.match(guard({ agent: managed, name: "bash", arguments: { command } }), /grep\/rg is disabled/u);
+  }
+  assert.equal(guard({ agent: managed, name: "read", arguments: { path: "README.md" } }), undefined);
+  assert.equal(guard({ agent: managed, name: "bash", arguments: { command: "sed -n '1,20p' README.md" } }), undefined);
+
+  await runtime.dispose();
+  assert.equal(disposed, true);
+});
+
+test("does not race another project that reserved the same session", async () => {
+  const { runtime, target } = makeRuntime({ acquireDispatch: () => null });
+  const result = await runtime.tickOnce();
+  assert.equal(result.results[0].reason, "session_reserved");
+  assert.equal(target.followups.length, 0);
+});
+
+test("backs off failed offline recovery and persists the next attempt across restart", async () => {
+  const first = makeRuntime({
+    random: () => 0.5,
+    config: {
+      offlineRetryInitialDelayMs: 5000,
+      offlineRetryMaxDelayMs: 60_000,
+      offlineRetryJitterRatio: 0.2,
+    },
+  });
+  let resumeCalls = 0;
+  first.runtime.ctx.agents.get = () => undefined;
+  first.runtime.ctx.sessionController = {
+    async resolveAgent() {
+      resumeCalls += 1;
+      throw new Error("upstream timeout");
+    },
+  };
+
+  const beforeFirst = Date.now();
+  const failed = await first.runtime.tickOnce();
+  const recovery = first.runtime.offlineRecovery.get(SESSION);
+  assert.equal(failed.results[0].reason, "agent_recovery_backoff");
+  assert.equal(resumeCalls, 1);
+  assert.equal(recovery.attempts, 1);
+  assert.equal(recovery.nextAttemptAt >= beforeFirst + 5000, true);
+
+  await first.runtime.tickOnce();
+  assert.equal(resumeCalls, 1, "a tick inside the backoff window must not resume again");
+
+  recovery.nextAttemptAt = Date.now() - 1;
+  const beforeSecond = Date.now();
+  await first.runtime.tickOnce();
+  assert.equal(resumeCalls, 2);
+  assert.equal(recovery.attempts, 2);
+  assert.equal(recovery.nextAttemptAt >= beforeSecond + 10_000, true);
+
+  const saved = JSON.parse(readFileSync(join(first.dir, "state", "state.json"), "utf8"));
+  assert.equal(saved.offlineRecovery[SESSION].attempts, 2);
+  assert.equal(saved.offlineRecovery[SESSION].nextAttemptAt, recovery.nextAttemptAt);
+
+  const second = makeRuntime({
+    dir: first.dir,
+    random: () => 0.5,
+    config: {
+      offlineRetryInitialDelayMs: 5000,
+      offlineRetryMaxDelayMs: 60_000,
+      offlineRetryJitterRatio: 0.2,
+    },
+  });
+  second.runtime.start();
+  assert.equal(second.runtime.offlineRecovery.get(SESSION).attempts, 2);
+  assert.equal(second.runtime.offlineRecovery.get(SESSION).nextAttemptAt, recovery.nextAttemptAt);
+  await second.runtime.dispose();
+});
+
 test("resolves the role through the bus alias state file", async () => {
   const dir = mkdtempSync(join(tmpdir(), "dispatch-gate-"));
   try {
@@ -150,6 +305,7 @@ test("pause blocks dispatch and is visible in the status file", async () => {
   assert.equal(target.followups.length, 0);
   const status = JSON.parse(readFileSync(join(dir, "status.json"), "utf8"));
   assert.equal(status.paused, true);
+  assert.equal(status.pauseSource, "manual");
   assert.equal(status.jobs[0].agent, "coding");
   await runtime.dispose();
 });
@@ -161,6 +317,7 @@ test("an unclean previous run starts paused and removes its lock on clean dispos
   runtime.start();
   assert.equal(runtime.uncleanStart, true);
   assert.equal(runtime.paused, true);
+  assert.equal(runtime.pauseSource, "unclean");
   const result = await runtime.tickOnce();
   assert.equal(result.paused, true);
   assert.equal(target.followups.length, 0);
@@ -168,6 +325,7 @@ test("an unclean previous run starts paused and removes its lock on clean dispos
   assert.equal(existsSync(join(dir, "state", "run.lock")), false);
   const status = JSON.parse(readFileSync(join(dir, "status.json"), "utf8"));
   assert.equal(status.cleanShutdown, true);
+  assert.equal(status.pauseSource, "unclean");
 });
 
 test("command status reports peers and pause/resume toggles the gate", async () => {
@@ -190,6 +348,7 @@ test("command status reports peers and pause/resume toggles the gate", async () 
   await new Promise((resolve) => setTimeout(resolve, 10));
   const status = JSON.parse(readFileSync(join(dir, "status.json"), "utf8"));
   assert.equal(status.paused, false);
+  assert.equal(status.pauseSource, null);
   assert.equal(status.bus.peers[0].alias, "coding");
   assert.equal(status.bus.lastMessage.from, "planner");
   await runtime.dispose();

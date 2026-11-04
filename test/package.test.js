@@ -31,7 +31,10 @@ test("declares a web client half for the composer", () => {
   assert.match(client, /\/gate status json/);
   assert.match(client, /\/gate pause/);
   assert.match(client, /\/gate resume/);
-  assert.match(client, /currentJob/);
+  assert.equal(client.includes("PLANNER_SESSION_ID"), false);
+  assert.match(client, /commandProject/);
+  assert.match(client, /project\.visible/);
+  assert.match(client, /selectedProject/);
 });
 
 test("bundle patch inserts the gate row with three jobs", () => {
@@ -43,7 +46,16 @@ test("bundle patch inserts the gate row with three jobs", () => {
   assert.match(patch, /id: planner-dispatch/);
   assert.match(patch, /assigned_coding/);
   assert.match(patch, /awaiting_verification/);
-  assert.match(patch, /tools\/control\.py/);
+  assert.match(patch, /\.venv\/bin\/python/);
+  const providerPolicies = patch.match(/retryPolicy:/g) ?? [];
+  assert.equal(providerPolicies.length, 2);
+  assert.match(patch, /id: llm-deepseek[\s\S]*?maxRetries: 2[\s\S]*?initialDelayMs: 5000/);
+  assert.match(patch, /id: llm-deepseek-account[\s\S]*?maxRetries: 2[\s\S]*?maxDelayMs: 60000/);
+  assert.match(patch, /retryableCodes: \[EMPTY_RESPONSE, RATE_LIMIT, SERVER, TIMEOUT, TRANSPORT\]/);
+  assert.match(patch, /offlineRecoveryEnabled: true/);
+  assert.match(patch, /projects:/);
+  assert.match(patch, /coordinatorAgent: planner/);
+  assert.match(patch, /workerStateRoles:/);
 });
 
 test("uses a sidebar title distinct from the built-in automation label", () => {
@@ -59,6 +71,7 @@ test("ships runtime, prompts, icon, and docs", () => {
   for (const file of [
     "lib/index.js",
     "lib/runtime.js",
+    "lib/manager.js",
     "lib/gate.js",
     "prompts/coding.md",
     "prompts/acceptance.md",

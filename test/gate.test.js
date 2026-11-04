@@ -3,10 +3,14 @@ import assert from "node:assert/strict";
 import {
   buildDispatchText,
   buildSource,
+  completedWorkerClaim,
   evaluateJob,
+  findClaim,
+  isCompletedClaim,
   normalizePollMs,
   parseControlStatus,
   resolveAgentId,
+  workerRoleForState,
 } from "../lib/gate.js";
 
 const SESSION = "session-11111111-1111-4111-8111-111111111111";
@@ -47,16 +51,16 @@ test("builds a distinct gate framing and producer source", () => {
   assert.match(text, /assigned_coding/);
   assert.match(text, /do the dispatch/);
 
-  const scoped = buildDispatchText(job(), "assigned_coding", { project: "demo-project", task: "T-1", round: "r01", sequence: 17 });
-  assert.match(scoped, /Project: demo-project/);
-  assert.equal(scoped.includes("Task: T-1"), false);
+  const scoped = buildDispatchText(job(), "assigned_coding", { project: "example-project", task: "S3-3b", round: "r01", sequence: 17 });
+  assert.match(scoped, /Project: example-project/);
+  assert.equal(scoped.includes("Task: S3-3b"), false);
 
   const source = buildSource(job(), "assigned_coding");
   assert.equal(source.kind, "dispatch-gate");
   assert.equal(source.form, "notice");
   assert.equal(source.producer, "dsh-dispatch-gate");
   assert.match(source.summary, /coding-dispatch/);
-  assert.match(buildSource(job(), "assigned_coding", { project: "demo-project" }).summary, /demo-project/);
+  assert.match(buildSource(job(), "assigned_coding", { project: "example-project" }).summary, /example-project/);
 });
 
 test("parses control status and rejects malformed output", () => {
@@ -77,4 +81,39 @@ test("clamps the poll interval", () => {
   assert.equal(normalizePollMs(10), 1000);
   assert.equal(normalizePollMs(999999), 60000);
   assert.equal(normalizePollMs("bad"), 10000);
+});
+
+test("validates the completed worker claim for the active task/round/handoff", () => {
+  const handoff = "a".repeat(64);
+  const status = {
+    state: "assigned_coding",
+    task_id: "S6-4a",
+    round: "r01",
+    handoff_sha256: handoff,
+    claims: [{
+      role: "coding",
+      task: "S6-4a",
+      round: "r01",
+      status: "completed",
+      claim_token: "token",
+      role_session: SESSION,
+      finished_at: "2026-11-03T21:24:49+08:00",
+      handoff_sha256: handoff,
+    }],
+  };
+  assert.equal(workerRoleForState("assigned_coding"), "coding");
+  assert.equal(workerRoleForState("awaiting_verification"), "acceptance");
+  assert.equal(workerRoleForState("idle"), null);
+  assert.equal(findClaim(status, "coding")?.claim_token, "token");
+  assert.equal(findClaim(status, "acceptance"), null);
+  assert.equal(isCompletedClaim(findClaim(status, "coding"), status), true);
+  assert.equal(isCompletedClaim(findClaim(status, "coding"), status, SESSION), true);
+  assert.equal(isCompletedClaim({ ...status.claims[0], role_session: "coding-s64a-r01" }, status, SESSION), false);
+  assert.deepEqual(completedWorkerClaim(status, undefined, { coding: SESSION })?.role, "coding");
+  assert.equal(completedWorkerClaim(status), null, "a claim cannot be accepted without the configured role session");
+
+  assert.equal(isCompletedClaim({ ...status.claims[0], status: "claimed" }, status), false);
+  assert.equal(isCompletedClaim({ ...status.claims[0], handoff_sha256: "b".repeat(64) }, status), false);
+  assert.equal(isCompletedClaim({ ...status.claims[0], claim_token: "" }, status), false);
+  assert.equal(completedWorkerClaim({ ...status, state: "idle" }, undefined, { coding: SESSION }), null);
 });

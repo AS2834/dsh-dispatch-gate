@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Dispatch Gate",
-    "description": "Runs control-plane dispatch prompts only when the target session is idle and the control state matches."
+    "description": "Manages project-scoped custom roles and dispatches only when the target session is idle and control state matches."
   }
 }

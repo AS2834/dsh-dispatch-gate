@@ -1,7 +1,8 @@
 {
   "name": "dsh-dispatch-gate",
-  "version": "0.2.0",
-  "description": "Idle-gated, event-driven dispatch for independent DSH root sessions, with a composer status/pause bar.",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Idle-gated control-plane dispatch for DSH root sessions, with a composer status/pause bar.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -44,23 +45,5 @@
   "peerDependencies": {
     "@deepseek-ai/dsh-llm": "^0.2.1-rc.2",
     "@deepseek-ai/schemastery": "^3.18.5"
-  },
-  "license": "MIT",
-  "author": "dsh-dispatch-gate contributors",
-  "keywords": [
-    "dsh",
-    "deepseek-harness",
-    "dispatch",
-    "multi-agent",
-    "scheduler",
-    "idle"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/AS2834/dsh-dispatch-gate.git"
-  },
-  "homepage": "https://github.com/AS2834/dsh-dispatch-gate#readme",
-  "bugs": {
-    "url": "https://github.com/AS2834/dsh-dispatch-gate/issues"
   }
 }
