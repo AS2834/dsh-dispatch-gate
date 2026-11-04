@@ -15,7 +15,7 @@
 
 推荐与 **[dsh-agent-bus](https://github.com/AS2834/dsh-agent-bus)** 一起使用：Bus 提供稳定角色、持久消息、blocker 和离线补投；Gate 提供状态驱动派发、空闲闸门、pause、恢复与严格交接校验。两者组成“通信 + 调度”底座，但项目仍需提供自己的 control/state/claims。
 
-## 先说清楚：Gate 不是整套自动化
+## Gate 不是整套自动化
 
 一套完整系统由三部分组成，它们**没有合并**：
 
